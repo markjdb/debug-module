@@ -47,6 +47,27 @@ SYSCTL_PROC(_debug, OID_AUTO, lor, CTLTYPE_INT | CTLFLAG_RW, 0, 0, debug_lor,
     "I", "trigger a lock order reversal");
 
 static int
+debug_grab_giant(SYSCTL_HANDLER_ARGS)
+{
+	int val, error;
+
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || !req->newptr)
+		return (error);
+	else if (val == 0)
+		return (0);
+
+	mtx_lock(&Giant);
+
+	while (1) ;
+
+	return (0);
+}
+
+SYSCTL_PROC(_debug, OID_AUTO, grab_giant, CTLTYPE_INT | CTLFLAG_RW, 0, 0,
+    debug_grab_giant, "I", "acquire the Giant lock");
+
+static int
 debug_modevent(struct module *m, int what, void *arg)
 {
 
