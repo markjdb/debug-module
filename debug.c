@@ -2,8 +2,49 @@
 #include <sys/param.h>
 
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/module.h>
+#include <sys/mutex.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
+
+static int
+debug_lor(SYSCTL_HANDLER_ARGS)
+{
+	static struct mtx mtx1, mtx2;
+	static int i = 0;
+	char mtxname1[32], mtxname2[32];
+	int val, error;
+
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || !req->newptr)
+		return (error);
+	else if (val == 0)
+		return (0);
+
+	snprintf(mtxname1, sizeof(mtxname1), "mtx%d", i++);
+	mtx_init(&mtx1, NULL, mtxname1, MTX_DEF);
+	snprintf(mtxname2, sizeof(mtxname2), "mtx%d", i++);
+	mtx_init(&mtx2, NULL, mtxname2, MTX_DEF);
+
+	mtx_lock(&mtx1);
+	mtx_lock(&mtx2);
+	mtx_unlock(&mtx2);
+	mtx_unlock(&mtx1);
+
+	mtx_lock(&mtx2);
+	mtx_lock(&mtx1);
+	mtx_unlock(&mtx1);
+	mtx_unlock(&mtx2);
+
+	mtx_destroy(&mtx1);
+	mtx_destroy(&mtx2);
+
+	return (0);
+}
+
+SYSCTL_PROC(_debug, OID_AUTO, lor, CTLTYPE_INT | CTLFLAG_RW, 0, 0, debug_lor,
+    "I", "trigger a lock order reversal");
 
 static int
 debug_modevent(struct module *m, int what, void *arg)
