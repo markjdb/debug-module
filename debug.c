@@ -9,7 +9,57 @@
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 
-MALLOC_DECLARE(M_DEBUGMODULE);
+MALLOC_DECLARE(M_DEBUGMOD);
+
+struct debug_desc {
+	void		*d_data;
+	size_t		 d_dlen;
+	uint32_t	 d_csum;
+	char		 d_ver;
+	struct callout	 d_callout;
+};
+
+struct debug_desc *desc;
+
+static void
+debug_memver()
+{
+
+	desc->d_data = malloc(desc->d_dlen, M_DEBUGMOD, M_WAITOK);
+}
+
+static int
+debug_set_memver(SYSCTL_HANDLER_ARGS)
+{
+	int val, error;
+
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || !req->newptr)
+		return (error);
+
+	if (val != 0) {
+		if (desc->d_ver == 1) {
+			printf("debug: verification is already running\n");
+			return (EINVAL);
+		} else if (val < 0 || val > 4096) {
+			printf("debug: invalid block size\n");
+			return (EINVAL);
+		}
+		callout_init(&desc->d_callout, 1 /* MPSAFE */);
+		desc->d_dlen = val;
+		/* Kick off the verification loop. */
+		debug_memver();
+	} else {
+		callout_drain(&desc->d_callout);
+		free(desc->d_data, M_DEBUGMOD);
+		desc->d_ver = 0;
+	}
+
+	return (0);
+}
+
+SYSCTL_PROC(_debug, OID_AUTO, memver, CTLTYPE_INT | CTLFLAG_RW, 0, 0,
+    debug_set_memver, "I", "enable and disable malloc verification");
 
 static int
 debug_lor(SYSCTL_HANDLER_ARGS)
@@ -25,6 +75,7 @@ debug_lor(SYSCTL_HANDLER_ARGS)
 	else if (val == 0)
 		return (0);
 
+	/* mtx_init doesn't make a copy of the name. */
 	snprintf(mtxname1, sizeof(mtxname1), "mtx%d", i++);
 	mtx_init(&mtx1, NULL, mtxname1, MTX_DEF);
 	snprintf(mtxname2, sizeof(mtxname2), "mtx%d", i++);
@@ -76,9 +127,11 @@ debug_modevent(struct module *m, int what, void *arg)
 
 	switch (what) {
 	case MOD_LOAD:
+		desc = malloc(sizeof(*desc), M_DEBUGMOD, M_ZERO | M_WAITOK);
 		printf("debug module loaded\n");
 		break;
 	case MOD_UNLOAD:
+		free(desc->d_data, M_DEBUGMOD);
 		printf("debug module unloaded\n");
 		break;
 	}
