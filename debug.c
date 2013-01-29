@@ -3,10 +3,13 @@
 
 #include <sys/kernel.h>
 #include <sys/lock.h>
+#include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
+
+MALLOC_DECLARE(M_DEBUGMODULE);
 
 static int
 debug_lor(SYSCTL_HANDLER_ARGS)
