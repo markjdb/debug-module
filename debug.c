@@ -23,12 +23,12 @@ struct debug_desc {
 
 struct debug_desc *desc;
 
-static int		debug_enable_memver();
-static void		debug_start_memver();
-static void		debug_verify_memver();
+static int		debug_enable_memver(SYSCTL_HANDLER_ARGS);
+static void		debug_start_memver(void *);
+static void		debug_verify_memver(void *);
 
 static void
-debug_start_memver()
+debug_start_memver(void *arg __unused)
 {
 	void *data;
 
@@ -45,7 +45,7 @@ debug_start_memver()
 }
 
 static void
-debug_verify_memver()
+debug_verify_memver(void *arg __unused)
 {
 	uint32_t crc;
 	int i, j;
