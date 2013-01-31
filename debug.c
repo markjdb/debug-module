@@ -2,6 +2,7 @@
 #include <sys/param.h>
 
 #include <sys/kernel.h>
+#include <sys/libkern.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
@@ -10,31 +11,67 @@
 #include <sys/systm.h>
 
 MALLOC_DECLARE(M_DEBUGMOD);
+MALLOC_DEFINE(M_DEBUGMOD, "debug", "Memory used by the debug module");
 
 struct debug_desc {
 	void		*d_data;
 	size_t		 d_dlen;
-	uint32_t	 d_csum;
+	uint32_t	 d_crc;
 	char		 d_ver;
 	struct callout	 d_callout;
 };
 
 struct debug_desc *desc;
 
-static void
-debug_memver()
-{
+static int		debug_enable_memver();
+static void		debug_start_memver();
+static void		debug_verify_memver();
 
+static void
+debug_start_memver()
+{
+	void *data;
+
+	data = desc->d_data;
+	/* Allocate a new block before freeing the old one. */
 	desc->d_data = malloc(desc->d_dlen, M_DEBUGMOD, M_WAITOK);
+	free(data, M_DEBUGMOD);
+	data = desc->d_data;
+
+	arc4rand(data, desc->d_dlen, 0);
+	desc->d_crc = crc32(data, desc->d_dlen);
+
+	callout_reset(&desc->d_callout, hz / 4, debug_verify_memver, NULL);
+}
+
+static void
+debug_verify_memver()
+{
+	uint32_t crc;
+	int i, j;
+
+	crc = crc32(desc->d_data, desc->d_dlen);
+	if (crc != desc->d_crc) {
+		printf("debug: CRC mismatch, dumping block\n");
+		for (i = 0; i < desc->d_dlen; i += 8) {
+			printf("\t%p:", (char *)desc->d_data + i);
+			for (j = 0; j < min(desc->d_dlen - i, 8); j++)
+				printf(" %02x", *((u_char *)desc->d_data + i + j));
+			printf("\n");
+		}
+	}
+
+	callout_reset(&desc->d_callout, 1, debug_start_memver, NULL);
 }
 
 static int
-debug_set_memver(SYSCTL_HANDLER_ARGS)
+debug_enable_memver(SYSCTL_HANDLER_ARGS)
 {
 	int val, error;
 
+	val = desc->d_dlen;
 	error = sysctl_handle_int(oidp, &val, 0, req);
-	if (error || !req->newptr)
+	if (error || req->newptr == NULL)
 		return (error);
 
 	if (val != 0) {
@@ -42,16 +79,25 @@ debug_set_memver(SYSCTL_HANDLER_ARGS)
 			printf("debug: verification is already running\n");
 			return (EINVAL);
 		} else if (val < 0 || val > 4096) {
-			printf("debug: invalid block size\n");
+			printf("debug: invalid block size %d\n", val);
 			return (EINVAL);
 		}
-		callout_init(&desc->d_callout, 1 /* MPSAFE */);
+		desc->d_data = NULL;
 		desc->d_dlen = val;
-		/* Kick off the verification loop. */
-		debug_memver();
-	} else {
+
+		callout_init(&desc->d_callout, 1 /* MPSAFE */);
+		callout_reset(&desc->d_callout, 1, debug_start_memver, NULL);
+		desc->d_ver = 1;
+
+		printf("debug: starting memory verification on %zd-byte blocks\n",
+		    desc->d_dlen);
+	} else if (desc->d_ver != 0) {
+		printf("debug: verification finished\n");
 		callout_drain(&desc->d_callout);
 		free(desc->d_data, M_DEBUGMOD);
+		desc->d_data = NULL;
+		desc->d_dlen = 0;
+
 		desc->d_ver = 0;
 	}
 
@@ -59,7 +105,7 @@ debug_set_memver(SYSCTL_HANDLER_ARGS)
 }
 
 SYSCTL_PROC(_debug, OID_AUTO, memver, CTLTYPE_INT | CTLFLAG_RW, 0, 0,
-    debug_set_memver, "I", "enable and disable malloc verification");
+    debug_enable_memver, "I", "enable and disable malloc verification");
 
 static int
 debug_lor(SYSCTL_HANDLER_ARGS)
@@ -69,8 +115,9 @@ debug_lor(SYSCTL_HANDLER_ARGS)
 	char mtxname1[32], mtxname2[32];
 	int val, error;
 
+	val = 0;
 	error = sysctl_handle_int(oidp, &val, 0, req);
-	if (error || !req->newptr)
+	if (error || req->newptr == NULL)
 		return (error);
 	else if (val == 0)
 		return (0);
@@ -105,8 +152,9 @@ debug_grab_giant(SYSCTL_HANDLER_ARGS)
 {
 	int val, error;
 
+	val = 0;
 	error = sysctl_handle_int(oidp, &val, 0, req);
-	if (error || !req->newptr)
+	if (error || req->newptr == NULL)
 		return (error);
 	else if (val == 0)
 		return (0);
@@ -131,7 +179,10 @@ debug_modevent(struct module *m, int what, void *arg)
 		printf("debug module loaded\n");
 		break;
 	case MOD_UNLOAD:
+		if (desc->d_ver != 0)
+			callout_drain(&desc->d_callout);
 		free(desc->d_data, M_DEBUGMOD);
+		free(desc, M_DEBUGMOD);
 		printf("debug module unloaded\n");
 		break;
 	}
