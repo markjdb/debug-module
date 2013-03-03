@@ -1,5 +1,6 @@
 #include <sys/types.h>
 #include <sys/param.h>
+#include <sys/systm.h>
 
 #include <sys/kernel.h>
 #include <sys/libkern.h>
@@ -8,7 +9,6 @@
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/sysctl.h>
-#include <sys/systm.h>
 
 MALLOC_DECLARE(M_DEBUGMOD);
 MALLOC_DEFINE(M_DEBUGMOD, "debug", "Memory used by the debug module");
@@ -89,7 +89,7 @@ debug_enable_memver(SYSCTL_HANDLER_ARGS)
 		callout_reset(&desc->d_callout, 1, debug_start_memver, NULL);
 		desc->d_ver = 1;
 
-		printf("debug: starting memory verification on %zd-byte blocks\n",
+		printf("debug: starting memory verification on %zu-byte blocks\n",
 		    desc->d_dlen);
 	} else if (desc->d_ver != 0) {
 		printf("debug: verification finished\n");
@@ -168,6 +168,24 @@ debug_grab_giant(SYSCTL_HANDLER_ARGS)
 
 SYSCTL_PROC(_debug, OID_AUTO, grab_giant, CTLTYPE_INT | CTLFLAG_RW, 0, 0,
     debug_grab_giant, "I", "acquire the Giant lock");
+
+static int
+debug_print_line(SYSCTL_HANDLER_ARGS)
+{
+	int val, error;
+
+	val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	printf("debug_print_line: arg %d ----------\n", val);
+
+	return (0);
+}
+
+SYSCTL_PROC(_debug, OID_AUTO, print_line, CTLTYPE_INT | CTLFLAG_WR, 0, 0,
+    debug_print_line, "I", "print a separator");
 
 static int
 debug_modevent(struct module *m, int what, void *arg)
