@@ -48,7 +48,7 @@ static void
 debug_verify_memver(void *arg __unused)
 {
 	uint32_t crc;
-	int i, j;
+	unsigned int i, j;
 
 	crc = crc32(desc->d_data, desc->d_dlen);
 	if (crc != desc->d_crc) {
@@ -56,7 +56,8 @@ debug_verify_memver(void *arg __unused)
 		for (i = 0; i < desc->d_dlen; i += 8) {
 			printf("\t%p:", (char *)desc->d_data + i);
 			for (j = 0; j < min(desc->d_dlen - i, 8); j++)
-				printf(" %02x", *((u_char *)desc->d_data + i + j));
+				printf(" %02x",
+				    *((u_char *)desc->d_data + i + j));
 			printf("\n");
 		}
 	}
@@ -76,10 +77,10 @@ debug_enable_memver(SYSCTL_HANDLER_ARGS)
 
 	if (val != 0) {
 		if (desc->d_ver == 1) {
-			printf("debug: verification is already running\n");
+			uprintf("debug: verification is already running\n");
 			return (EINVAL);
 		} else if (val < 0 || val > 4096) {
-			printf("debug: invalid block size %d\n", val);
+			uprintf("debug: invalid block size %d\n", val);
 			return (EINVAL);
 		}
 		desc->d_data = NULL;
@@ -89,10 +90,11 @@ debug_enable_memver(SYSCTL_HANDLER_ARGS)
 		callout_reset(&desc->d_callout, 1, debug_start_memver, NULL);
 		desc->d_ver = 1;
 
-		printf("debug: starting memory verification on %zu-byte blocks\n",
+		uprintf(
+		    "debug: starting memory verification on %zu-byte blocks\n",
 		    desc->d_dlen);
 	} else if (desc->d_ver != 0) {
-		printf("debug: verification finished\n");
+		uprintf("debug: verification finished\n");
 		callout_drain(&desc->d_callout);
 		free(desc->d_data, M_DEBUGMOD);
 		desc->d_data = NULL;
@@ -188,7 +190,7 @@ SYSCTL_PROC(_debug, OID_AUTO, print_line, CTLTYPE_INT | CTLFLAG_WR, 0, 0,
     debug_print_line, "I", "print a separator");
 
 static int
-debug_modevent(struct module *m, int what, void *arg)
+debug_modevent(struct module *m, int what, void *arg __unused)
 {
 
 	switch (what) {
