@@ -3,12 +3,16 @@
 #include <sys/systm.h>
 
 #include <sys/kernel.h>
+#include <sys/kthread.h>
 #include <sys/libkern.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/proc.h>
+#include <sys/sched.h>
 #include <sys/sysctl.h>
+#include <sys/unistd.h>
 
 MALLOC_DECLARE(M_DEBUGMOD);
 MALLOC_DEFINE(M_DEBUGMOD, "debug", "Memory used by the debug module");
@@ -188,6 +192,110 @@ debug_print_line(SYSCTL_HANDLER_ARGS)
 
 SYSCTL_PROC(_debug, OID_AUTO, print_line, CTLTYPE_INT | CTLFLAG_WR, 0, 0,
     debug_print_line, "I", "print a separator");
+
+static void
+debug_bind(void *arg)
+{
+	static int count = 0;
+
+	printf("debug_bind: binding to CPU 0 (count: %d)\n", count);
+
+	thread_lock(curthread);
+	sched_bind(curthread, 0);
+	thread_unlock(curthread);
+
+	printf("debug_bind: running on CPU 0 (count: %d)\n", count);
+	count++;
+
+	thread_lock(curthread);
+	sched_unbind(curthread);
+	thread_unlock(curthread);
+
+	printf("debug_bind: unbound from CPU 0 (count: %d)\n", count);
+
+	callout_reset((struct callout *)arg, hz, debug_bind, arg);
+}
+
+static void
+debug_hipri(void *arg __unused)
+{
+	int one, two;
+
+	pause("hipri", hz);
+
+	printf("debug_hipri: starting\n");
+
+	thread_lock(curthread);
+	sched_bind(curthread, 0);
+	thread_unlock(curthread);
+
+	printf("debug_hipri: spinning\n");
+
+	two = 0;
+	while (two++ < 50) {
+		one = 0;
+		while (one++ < 1000000000);
+	}
+
+	printf("debug_hipri: finished spinning\n");
+
+	thread_lock(curthread);
+	sched_unbind(curthread);
+	thread_unlock(curthread);
+
+	printf("debug_hipri: returning\n");
+}
+
+/*
+ * This sysctl aims to help track down a possible issue with sched_bind().
+ *
+ * It starts a self-scheduling callout which binds to CPU 0 and spins for
+ * a short time before unbinding itself, rescheduling and returning. It
+ * also starts a new high-priority kernel thread which binds to CPU 0,
+ * spins for a while, and returns. The idea is to get the callout thread
+ * to sit on a runqueue for a while since it can't preempt the higher-priority
+ * thread that's hogging CPU 0.
+ *
+ * To use this sysctl, set it to a non-zero value.
+ */
+static int
+debug_co_preempt(SYSCTL_HANDLER_ARGS)
+{
+	struct thread *td;
+	struct callout *co;
+	struct mtx *m;
+	int val, error;
+
+	val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+	if (val == 0)
+		return (0);
+
+	m = malloc(sizeof(*m), M_DEBUGMOD, M_WAITOK | M_ZERO);
+	co = malloc(sizeof(*co), M_DEBUGMOD, M_WAITOK | M_ZERO);
+
+	mtx_init(m, "co mtx", NULL, MTX_DEF);
+	callout_init_mtx(co, m, 0);
+	callout_reset(co, hz, debug_bind, co);
+
+	error = kthread_add(debug_hipri, NULL, curproc, &td, RFSTOPPED,
+	    0, "hipri");
+	if (error != 0) {
+		uprintf("debug_co_preempt: error creating kthread\n");
+		return (EINVAL); /* XXX What should this be? */
+	}
+	thread_lock(td);
+	sched_prio(td, 10);
+	sched_add(td, SRQ_BORING);
+	thread_unlock(td);
+
+	return (error);
+}
+
+SYSCTL_PROC(_debug, OID_AUTO, co_preempt, CTLTYPE_INT | CTLFLAG_WR, 0, 0,
+    debug_co_preempt, "I", "start a CPU-binding callout");
 
 static int
 debug_modevent(struct module *m, int what, void *arg __unused)
