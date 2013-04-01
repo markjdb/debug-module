@@ -10,9 +10,14 @@
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/queue.h>
 #include <sys/sched.h>
 #include <sys/sysctl.h>
 #include <sys/unistd.h>
+
+#include <vm/vm.h>
+#include <vm/vm_object.h>
+#include <vm/uma.h>
 
 MALLOC_DECLARE(M_DEBUGMOD);
 MALLOC_DEFINE(M_DEBUGMOD, "debug", "Memory used by the debug module");
@@ -296,6 +301,42 @@ debug_co_preempt(SYSCTL_HANDLER_ARGS)
 
 SYSCTL_PROC(_debug, OID_AUTO, co_preempt, CTLTYPE_INT | CTLFLAG_WR, 0, 0,
     debug_co_preempt, "I", "start a CPU-binding callout");
+
+static int
+debug_zone_alloc(SYSCTL_HANDLER_ARGS)
+{
+	static int c = 0;
+	int error, val, i;
+	struct vm_object *debug_obj;
+	char *buf;
+	uma_zone_t zone;
+	void *item;
+
+	val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	buf = malloc(32, M_DEBUGMOD, M_WAITOK);
+	snprintf(buf, 32, "DEBUGZ%d", c++);
+
+	debug_obj = malloc(sizeof(*debug_obj), M_DEBUGMOD, M_WAITOK | M_ZERO);
+
+	zone = uma_zcreate(buf, 128, NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
+	    UMA_ZONE_NOFREE | UMA_ZONE_VM);
+	if (zone == NULL) {
+		printf("debug: failed to allocate zone\n");
+		return (EINVAL);
+	} else if (uma_zone_set_obj(zone, debug_obj, 10000) == 0) {
+		printf("debug: failed to set VM object for zone\n");
+		return (EINVAL);
+	}
+
+	return (0);
+}
+
+SYSCTL_PROC(_debug, OID_AUTO, alloc_zone, CTLTYPE_INT | CTLFLAG_WR, 0, 0,
+    debug_zone_alloc, "I", "allocate a zone");
 
 static int
 debug_modevent(struct module *m, int what, void *arg __unused)
