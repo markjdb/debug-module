@@ -5,6 +5,7 @@
 #include <sys/kernel.h>
 #include <sys/kthread.h>
 #include <sys/libkern.h>
+#include <sys/linker.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
@@ -18,6 +19,9 @@
 #include <vm/vm.h>
 #include <vm/vm_object.h>
 #include <vm/uma.h>
+
+#include <machine/metadata.h>
+#include <machine/pc/bios.h>
 
 MALLOC_DECLARE(M_DEBUGMOD);
 MALLOC_DEFINE(M_DEBUGMOD, "debug", "Memory used by the debug module");
@@ -306,11 +310,10 @@ static int
 debug_zone_alloc(SYSCTL_HANDLER_ARGS)
 {
 	static int c = 0;
-	int error, val, i;
+	int error, val;
 	struct vm_object *debug_obj;
 	char *buf;
 	uma_zone_t zone;
-	void *item;
 
 	val = 0;
 	error = sysctl_handle_int(oidp, &val, 0, req);
@@ -337,6 +340,66 @@ debug_zone_alloc(SYSCTL_HANDLER_ARGS)
 
 SYSCTL_PROC(_debug, OID_AUTO, alloc_zone, CTLTYPE_INT | CTLFLAG_WR, 0, 0,
     debug_zone_alloc, "I", "allocate a zone");
+
+static const char *
+smap_entry_type(uint32_t type)
+{
+
+	switch (type) {
+	case 0x01:
+		return ("MEMORY");
+	case 0x02:
+		return ("RESERVED");
+	case 0x03:
+		return ("ACPI_RECLAIM");
+	case 0x04:
+		return ("ACPI_NVS");
+	case 0x05:
+		return ("ERROR");
+	default:
+		return ("??");
+	}
+}
+
+static int
+debug_dump_smap(SYSCTL_HANDLER_ARGS)
+{
+	struct bios_smap *smap, *smapbase, *smapend;
+	uint32_t smapsize;
+	int error, len;
+	char buf[128];
+	caddr_t kmdp;
+
+	kmdp = preload_search_by_type("elf kernel");
+	if (kmdp == NULL)
+		kmdp = preload_search_by_type("elf64 kernel");
+
+	smapbase = (struct bios_smap *)preload_search_info(kmdp,
+	    MODINFO_METADATA | MODINFOMD_SMAP);
+	if (smapbase == NULL) {
+		printf("debug: failed to obtain SMAP info\n");
+		return (EINVAL);
+	}
+
+	smapsize = *((uint32_t *)smapbase - 1);
+	smapend = (struct bios_smap *)((uintptr_t)smapbase + smapsize);
+
+	for (smap = smapbase; smap < smapend; smap++) {
+		len = snprintf(buf, sizeof(buf), "\nSMAP type=0x%02x (%s), "
+		    "base=0x%016llx, len=0x%016llx",
+		    (unsigned int)smap->type, smap_entry_type(smap->type),
+		    (unsigned long long)smap->base,
+		    (unsigned long long)smap->length);
+		error = sysctl_handle_opaque(oidp, buf, len, req);
+		if (error)
+			return (error);
+	}
+
+	return (0);
+}
+
+SYSCTL_PROC(_debug, OID_AUTO, dump_smap, CTLTYPE_STRING | CTLFLAG_RD, NULL, 0,
+    debug_dump_smap, "A", "The system address map");
 
 static int
 debug_modevent(struct module *m, int what, void *arg __unused)
