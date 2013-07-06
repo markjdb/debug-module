@@ -23,7 +23,6 @@
 #include <machine/metadata.h>
 #include <machine/pc/bios.h>
 
-MALLOC_DECLARE(M_DEBUGMOD);
 MALLOC_DEFINE(M_DEBUGMOD, "debug", "Memory used by the debug module");
 
 struct debug_desc {
