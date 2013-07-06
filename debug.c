@@ -306,6 +306,7 @@ debug_co_preempt(SYSCTL_HANDLER_ARGS)
 SYSCTL_PROC(_debug, OID_AUTO, co_preempt, CTLTYPE_INT | CTLFLAG_WR, 0, 0,
     debug_co_preempt, "I", "start a CPU-binding callout");
 
+#if 0
 static int
 debug_zone_alloc(SYSCTL_HANDLER_ARGS)
 {
@@ -340,6 +341,30 @@ debug_zone_alloc(SYSCTL_HANDLER_ARGS)
 
 SYSCTL_PROC(_debug, OID_AUTO, alloc_zone, CTLTYPE_INT | CTLFLAG_WR, 0, 0,
     debug_zone_alloc, "I", "allocate a zone");
+#endif
+
+static int
+debug_delayed_panic(SYSCTL_HANDLER_ARGS)
+{
+	int error, val;
+
+	val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	printf("pausing for %d seconds\n", val);
+
+	pause("dpanic", hz * val);
+
+	panic("debug: delayed panic");
+
+	return (0);
+}
+
+SYSCTL_PROC(_debug, OID_AUTO, delayed_panic,
+    CTLTYPE_INT | CTLFLAG_WR | CTLFLAG_MPSAFE, 0, 0, debug_delayed_panic, "I",
+    "sleep for a specified number of seconds and then panic");
 
 static const char *
 smap_entry_type(uint32_t type)
